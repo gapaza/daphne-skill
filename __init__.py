@@ -3,6 +3,7 @@ from mycroft import MycroftSkill, intent_file_handler
 
 class Daphne(MycroftSkill):
     def __init__(self):
+        print("-------> Starting Daphne Skill")
         MycroftSkill.__init__(self)
 
     @intent_file_handler('daphne.intent')

@@ -1,4 +1,6 @@
 from mycroft import MycroftSkill, intent_file_handler
+from mycroft.skills.core import intent_handler
+from adapt.intent import IntentBuilder
 
 import websocket
 from threading import Thread
@@ -18,6 +20,7 @@ class Daphne(MycroftSkill):
         self.connection = None
         self.connection_queue = Queue()
         self.session_key = None
+        self.session_key_tutorial = True
 
     # Websocket App Functions
     def on_message(self, ws, message):
@@ -25,7 +28,7 @@ class Daphne(MycroftSkill):
         json_message = json.loads(message)
         message_class = None
 
-        # Assigned message class
+        # Message Class
         if 'class' in json_message:
             message_class = json_message['class']
 
@@ -58,7 +61,7 @@ class Daphne(MycroftSkill):
 
     # Connection Functions
     def establish_connection(self):
-        if self.connection is None:
+        if self.connection is None and self.ws_thread is None:
             self.connection = websocket.WebSocketApp(self.ws_url,
                                                      on_message=lambda ws, message: self.on_message(ws, message),
                                                      on_error=lambda ws, error: self.on_error(ws, error),
@@ -67,8 +70,15 @@ class Daphne(MycroftSkill):
             self.ws_thread = Thread(target=self.open_connection, args=(self.connection_queue, self.connection))
             self.ws_thread.start()
 
+    def test_connection(self):
+        if self.connection is not None and self.ws_thread is not None:
+            test_message = json.dumps({'msg_type': 'mycroft', 'class': 'test_connection'})
+            self.connection.send(test_message)
+        else:
+            self.speak("no connection exists")
+
     def terminate_connection(self):
-        if self.connection is not None:
+        if self.connection is not None and self.ws_thread is not None:
             self.connection.close()
             self.ws_thread.join()
             self.connection = None
@@ -79,11 +89,24 @@ class Daphne(MycroftSkill):
 
 
     # Intents
+    @intent_file_handler('set.session.key.intent')  # set daphne key to ###
+    def set_daphne_session_key(self, message):
+        # please read your six digit key
+        session_key = self.get_response("connection.key.request", data=None, validator=None, on_fail=None, num_retries=3)
+        if session_key:
+            self.speak(str(session_key))
+            self.session_key = session_key
+
     @intent_file_handler('connect.intent')  # connect to daphne
-    def connect_daphne(self, message):
-        if self.connection is None:
+    def connect_to_daphne(self, message):
+        if self.connection is None and self.session_key is not None:
             self.establish_connection()
-            self.speak('connection successful')
+            time.sleep(3)
+            self.test_connection()
+        elif self.connection is None and self.session_key is None:
+            self.speak("You must set a session key before connecting to daphne")
+            if self.session_key_tutorial:
+                if self.ask_yesno("connection.new.session.query") == "yes":
         else:
             # I am already connected to daphne, would you like to connect to a new session?
             if self.ask_yesno("connection.new.session.query") == "yes":
@@ -93,18 +116,16 @@ class Daphne(MycroftSkill):
                 self.speak('new connection successful')
 
     @intent_file_handler('test.connection.intent')  # "test daphne connection"
-    def test_connection(self):
-        if self.connection is not None:
-            test_message = json.dumps({'msg_type': 'mycroft', 'class': 'test_connection'})
-            self.connection.send(test_message)
+    def test_daphne_connection(self, message):
+        self.test_connection()
 
     @intent_file_handler('disconnect.intent')  # disconnect daphne
-    def disconnect_daphne(self, message):
-        print('Message', message)
+    def disconnect_from_daphne(self, message):
         if self.connection is None:
-            self.speak('No connection exists')
+            self.speak('no connection exists')
         else:
-            self.speak('Terminated connection')
+            self.terminate_connection()
+            self.speak('connection terminated')
 
 
 

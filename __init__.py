@@ -13,7 +13,7 @@ class Daphne(MycroftSkill):
         print("Initializing Daphne Skill")
 
         # Connection Variables
-        self.ws_url = 'ws://localhost:8000/api/eoss/ws'
+        self.ws_url = 'ws://localhost:8000/api/mycroft'
         self.ws_thread = None
         self.connection = None
         self.connection_queue = Queue()
@@ -31,7 +31,7 @@ class Daphne(MycroftSkill):
         if 'type' not in json_message:              # Ping messages
             return
         if json_message['type'] == 'mycroft.test':  # Test messages
-            self.speak(str(json_message['message']))
+            self.handle_test_message(json_message['content'])
 
     def on_error(self, ws, error):
         print(error)
@@ -57,13 +57,19 @@ class Daphne(MycroftSkill):
         connection.run_forever()
 
 
+    # Websocket Message Handlers
+    def handle_test_message(self, message_content):
+        self.speak(str(message_content))
+
+
     # Connection Functions
     def establish_connection(self):
         if self.connection is None and self.ws_thread is None:
             self.connection = websocket.WebSocketApp(self.ws_url,
                                                      on_message=lambda ws, message: self.on_message(ws, message),
                                                      on_error=lambda ws, error: self.on_error(ws, error),
-                                                     on_close=lambda ws: self.on_close(ws))
+                                                     on_close=lambda ws: self.on_close(ws),
+                                                     header={'mycroft-session': str(self.session_key)})
             self.connection.on_open = lambda ws: self.on_open(ws)
             self.ws_thread = Thread(target=self.open_connection, args=(self.connection_queue, self.connection))
             self.ws_thread.start()
@@ -96,7 +102,7 @@ class Daphne(MycroftSkill):
                 self.speak(str(phrase))
 
     def get_session_key(self):
-        session_key = self.get_response("PleaseReadYourSixDigitKey",
+        session_key = self.get_response("PleaseReadYourFourDigitKey",
                                         data=None,
                                         validator=lambda utterance: self.validate_key(utterance),
                                         on_fail=lambda utterance: self.invalid_key(utterance),
@@ -118,7 +124,7 @@ class Daphne(MycroftSkill):
 
     def validate_key(self, utterance):
         key_digits = [int(i) for i in utterance.split() if i.isdigit()]
-        if len(key_digits) != 6:
+        if len(key_digits) != 4:
             return False
         else:
             return True
@@ -130,7 +136,7 @@ class Daphne(MycroftSkill):
         elif self.session_key_set_tries == 1:
             return "invalid key. try again"
         else:
-            return "the key must be six digits long. please read your key"
+            return "the key must be four digits long. please read your key"
 
 
     # Intents
@@ -141,17 +147,8 @@ class Daphne(MycroftSkill):
     @intent_file_handler('connect.intent')  # connect to daphne
     def connect_to_daphne(self, message):
         if self.connection is None and self.session_key is not None:
-            self.speak('your current session key is ' + self.session_key_phrase)
-            if self.ask_yesno("WouldYouLikeToConnectWithThisKey") == "yes":
-                self.establish_connection()
-            else:
-                if self.ask_yesno("WouldYouLikeToSetADifferentSessionKey") == "yes":
-                    if self.get_session_key():
-                        self.establish_connection()
-                    else:
-                        self.speak("connection aborted")
-                else:
-                    self.speak("connection aborted")
+            self.speak('connecting to daphne with session key ' + self.session_key_phrase)
+            self.establish_connection()
         elif self.connection is None and self.session_key is None:
             self.speak("You must set a session key before connecting to daphne")
             if self.session_key_tutorial:
@@ -183,6 +180,15 @@ class Daphne(MycroftSkill):
             self.speak('you are not currently connected to daphne')
         else:
             self.terminate_connection('connection closed')
+
+    @intent_file_handler('refresh.connection.intent')  # refresh daphne connection
+    def refresh_daphne_connection(self, message):
+        if self.connection is not None and self.session_key is not None:
+            self.terminate_connection('refreshing connection')
+            self.establish_connection()
+            self.speak('connection refreshed')
+        else:
+            self.speak('no connection currently exists')
 
 
 

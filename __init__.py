@@ -1,6 +1,4 @@
 from mycroft import MycroftSkill, intent_file_handler
-from mycroft.skills.core import intent_handler
-from adapt.intent import IntentBuilder
 
 import websocket
 from threading import Thread
@@ -19,20 +17,20 @@ class Daphne(MycroftSkill):
         self.ws_thread = None
         self.connection = None
         self.connection_queue = Queue()
+
+        # Session Variables
         self.session_key = None
+        self.session_key_phrase = None
         self.session_key_tutorial = True
+        self.session_key_set_tries = 3
+
 
     # Websocket App Functions
     def on_message(self, ws, message):
-        print(message)
         json_message = json.loads(message)
-        message_class = None
-
-        # Message Class
-        if 'class' in json_message:
-            message_class = json_message['class']
-
-        if message_class == 'testing':
+        if 'type' not in json_message:              # Ping messages
+            return
+        if json_message['type'] == 'mycroft.test':  # Test messages
             self.speak(str(json_message['message']))
 
     def on_error(self, ws, error):
@@ -69,64 +67,122 @@ class Daphne(MycroftSkill):
             self.connection.on_open = lambda ws: self.on_open(ws)
             self.ws_thread = Thread(target=self.open_connection, args=(self.connection_queue, self.connection))
             self.ws_thread.start()
+            self.test_connection(success_phrase="connection established", fail_phrase="failed to connect")
 
-    def test_connection(self):
+    def test_connection(self, success_phrase=None, fail_phrase=None):
+        true_phrase = "connection successful"
+        false_phrase = "connection error"
+        if success_phrase is not None:
+            true_phrase = str(success_phrase)
+        if fail_phrase is not None:
+            false_phrase = str(fail_phrase)
+        time.sleep(3)
         if self.connection is not None and self.ws_thread is not None:
-            test_message = json.dumps({'msg_type': 'mycroft', 'class': 'test_connection'})
+            test_message = json.dumps({'msg_type': 'mycroft_test', 'phrase': true_phrase})
             self.connection.send(test_message)
         else:
-            self.speak("no connection exists")
+            self.speak(false_phrase)
 
-    def terminate_connection(self):
+    def terminate_connection(self, terminate_phrase=None):
+        phrase = 'connection closed'
+        if terminate_phrase is not None:
+            phrase = terminate_phrase
         if self.connection is not None and self.ws_thread is not None:
             self.connection.close()
             self.ws_thread.join()
             self.connection = None
             self.ws_thread = None
+            if terminate_phrase is not None:
+                self.speak(str(phrase))
 
     def get_session_key(self):
-        print("Fill")
+        session_key = self.get_response("PleaseReadYourSixDigitKey",
+                                        data=None,
+                                        validator=lambda utterance: self.validate_key(utterance),
+                                        on_fail=lambda utterance: self.invalid_key(utterance),
+                                        num_retries=3)
+        self.session_key_set_tries = 3
+        if session_key:
+            key_digits = [int(i) for i in session_key.split() if i.isdigit()]
+            key_string = ''
+            for digit in key_digits:
+                key_string = key_string + str(digit)
+            self.session_key = int(key_string)
+            self.session_key_phrase = str(session_key)
+            phrase = 'session key set to ' + self.session_key_phrase
+            self.speak(phrase)
+            return True
+        else:
+            self.speak("key set unsuccessful")
+            return False
+
+    def validate_key(self, utterance):
+        key_digits = [int(i) for i in utterance.split() if i.isdigit()]
+        if len(key_digits) != 6:
+            return False
+        else:
+            return True
+
+    def invalid_key(self, utterance):
+        self.session_key_set_tries = self.session_key_set_tries - 1
+        if self.session_key_set_tries == 0:
+            return "invalid key"
+        elif self.session_key_set_tries == 1:
+            return "invalid key. try again"
+        else:
+            return "the key must be six digits long. please read your key"
 
 
     # Intents
-    @intent_file_handler('set.session.key.intent')  # set daphne key to ###
+    @intent_file_handler('set.session.key.intent')  # set daphne session
     def set_daphne_session_key(self, message):
-        # please read your six digit key
-        session_key = self.get_response("connection.key.request", data=None, validator=None, on_fail=None, num_retries=3)
-        if session_key:
-            self.speak(str(session_key))
-            self.session_key = session_key
+        self.get_session_key()
 
     @intent_file_handler('connect.intent')  # connect to daphne
     def connect_to_daphne(self, message):
         if self.connection is None and self.session_key is not None:
-            self.establish_connection()
-            time.sleep(3)
-            self.test_connection()
+            self.speak('your current session key is ' + self.session_key_phrase)
+            if self.ask_yesno("WouldYouLikeToConnectWithThisKey") == "yes":
+                self.establish_connection()
+            else:
+                if self.ask_yesno("WouldYouLikeToSetADifferentSessionKey") == "yes":
+                    if self.get_session_key():
+                        self.establish_connection()
+                    else:
+                        self.speak("connection aborted")
+                else:
+                    self.speak("connection aborted")
         elif self.connection is None and self.session_key is None:
             self.speak("You must set a session key before connecting to daphne")
             if self.session_key_tutorial:
-                if self.ask_yesno("connection.new.session.query") == "yes":
-        else:
-            # I am already connected to daphne, would you like to connect to a new session?
-            if self.ask_yesno("connection.new.session.query") == "yes":
-                self.get_session_key()
-                self.terminate_connection()
-                self.establish_connection()
-                self.speak('new connection successful')
+                if self.ask_yesno("WouldYouLikeToSetASessionKey") == "yes":
+                    if self.get_session_key():
+                        self.establish_connection()
+                    else:
+                        self.speak("connection aborted")
+                else:
+                    self.speak("connection aborted")
+        elif self.connection is not None and self.session_key is not None:
+            self.speak("you are already connected to daphne with session key " + self.session_key_phrase)
+            if self.ask_yesno("WouldYouLikeToConnectToANewSession") == "yes":
+                if self.get_session_key():
+                    self.terminate_connection('disconnected from current session')
+                    self.establish_connection()
+                else:
+                    self.speak("connection aborted")
+            else:
+                self.speak("keeping current connection")
 
     @intent_file_handler('test.connection.intent')  # "test daphne connection"
     def test_daphne_connection(self, message):
-        self.test_connection()
+        self.test_connection(success_phrase="connection valid", fail_phrase="you are not connected to daphne")
 
     @intent_file_handler('disconnect.intent')  # disconnect daphne
     def disconnect_from_daphne(self, message):
         if self.connection is None:
-            self.speak('no connection exists')
+            self.speak('you are not currently connected to daphne')
         else:
-            self.terminate_connection()
-            self.speak('connection terminated')
-
+            self.terminate_connection('connection closed')
 
 
 

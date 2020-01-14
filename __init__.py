@@ -1,16 +1,14 @@
-from mycroft import MycroftSkill, intent_file_handler
-
-import websocket
+from mycroft import FallbackSkill, intent_file_handler
 from threading import Thread
 from queue import Queue
+import websocket
 import time
 import json
 
 
-class Daphne(MycroftSkill):
+class Daphne(FallbackSkill):
     def __init__(self):
-        MycroftSkill.__init__(self)
-        print("Initializing Daphne Skill")
+        super(Daphne, self).__init__(name='Daphne')
 
         # Connection Variables
         self.ws_url = 'ws://localhost:8000/api/mycroft'
@@ -25,13 +23,12 @@ class Daphne(MycroftSkill):
         self.session_key_set_tries = 3
 
 
-    # Websocket App Functions
-    def on_message(self, ws, message):
-        json_message = json.loads(message)
-        if 'type' not in json_message:              # Ping messages
-            return
-        if json_message['type'] == 'mycroft.test':  # Test messages
-            self.handle_test_message(json_message['content'])
+
+    # -------------------------------
+    # --- Websocket App Functions ---
+    # -------------------------------
+    def open_connection(self, messaging_queue, connection):
+        connection.run_forever()
 
     def on_error(self, ws, error):
         print(error)
@@ -50,19 +47,27 @@ class Daphne(MycroftSkill):
                 counter = counter + 1
             time.sleep(1)
             ws.close()
-
         Thread(target=run).start()
 
-    def open_connection(self, messaging_queue, connection):
-        connection.run_forever()
+    def on_message(self, ws, message):
+        json_message = json.loads(message)
+        if 'type' not in json_message:              # Ping messages
+            return
+        if json_message['type'] == 'mycroft.test':  # Test messages
+            self.handle_test_message(json_message['content'])
 
-
-    # Websocket Message Handlers
     def handle_test_message(self, message_content):
         self.speak(str(message_content))
 
+    def send_command(self, msg_type, command):
+        # msg_type: mycroft_message --> message to front-end
+        # msg_type: mycroft_test    --> test message
+        if self.connection is not None and self.ws_thread is not None:
+            message = json.dumps({'msg_type': msg_type, 'command': command})
+            self.connection.send(message)
+        else:
+            self.speak("communication error with daphne server")
 
-    # Connection Functions
     def establish_connection(self):
         if self.connection is None and self.ws_thread is None:
             self.connection = websocket.WebSocketApp(self.ws_url,
@@ -139,12 +144,16 @@ class Daphne(MycroftSkill):
             return "the key must be four digits long. please read your key"
 
 
-    # Intents
-    @intent_file_handler('set.session.key.intent')  # set daphne session
+
+
+    # --------------------------
+    # --- Connection Intents ---
+    # --------------------------
+    @intent_file_handler('set.session.key.intent')     # set daphne session
     def set_daphne_session_key(self, message):
         self.get_session_key()
 
-    @intent_file_handler('connect.intent')  # connect to daphne
+    @intent_file_handler('connect.intent')             # connect to daphne
     def connect_to_daphne(self, message):
         if self.connection is None and self.session_key is not None:
             self.speak('connecting to daphne with session key ' + self.session_key_phrase)
@@ -170,11 +179,11 @@ class Daphne(MycroftSkill):
             else:
                 self.speak("keeping current connection")
 
-    @intent_file_handler('test.connection.intent')  # "test daphne connection"
+    @intent_file_handler('test.connection.intent')     # "test daphne connection"
     def test_daphne_connection(self, message):
         self.test_connection(success_phrase="connection valid", fail_phrase="you are not connected to daphne")
 
-    @intent_file_handler('disconnect.intent')  # disconnect daphne
+    @intent_file_handler('disconnect.intent')          # disconnect daphne
     def disconnect_from_daphne(self, message):
         if self.connection is None:
             self.speak('you are not currently connected to daphne')
@@ -189,6 +198,25 @@ class Daphne(MycroftSkill):
             self.speak('connection refreshed')
         else:
             self.speak('no connection currently exists')
+
+
+
+    # ---------------------------------
+    # --- Daphne Command Processing ---
+    # ---------------------------------
+    def initialize(self):
+        self.register_fallback(self.handle_fallback_command, 80)
+
+    def shutdown(self):
+        self.remove_fallback(self.handle_fallback_command)
+        super(Daphne, self).shutdown()
+
+    def handle_fallback_command(self, message):
+        if self.ws_thread is not None and self.connection is not None:
+            command = message.data['utterance']
+            self.send_command('mycroft_message', command)
+            return True
+        return False
 
 
 

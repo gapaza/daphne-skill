@@ -51,9 +51,11 @@ class Daphne(FallbackSkill):
 
     def on_message(self, ws, message):
         json_message = json.loads(message)
-        if 'type' not in json_message:              # Ping messages
+        if 'type' not in json_message:                 # Ping messages
             return
-        if json_message['type'] == 'mycroft.test':  # Test messages
+        if json_message['type'] == 'mycroft.test':     # Test messages
+            self.handle_test_message(json_message['content'])
+        if json_message['type'] == 'mycroft.forward':  # Forwarded messages
             self.handle_test_message(json_message['content'])
 
     def handle_test_message(self, message_content):
@@ -217,9 +219,6 @@ class Daphne(FallbackSkill):
             self.send_command('mycroft_message', command)
             return True
         return False
-
-
-
 
 
 

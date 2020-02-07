@@ -11,7 +11,7 @@ class Daphne(FallbackSkill):
         super(Daphne, self).__init__(name='Daphne')
 
         # Connection Variables
-        self.ws_url = 'ws://localhost:8000/api/mycroft'
+        self.ws_url = 'wss://dev.selva-research.com/api/mycroft'
         self.ws_thread = None
         self.connection = None
         self.connection_queue = Queue()
@@ -116,12 +116,12 @@ class Daphne(FallbackSkill):
                                         num_retries=3)
         self.session_key_set_tries = 3
         if session_key:
-            key_digits = [int(i) for i in session_key.split() if i.isdigit()]
+            key_digits = [int(i) for i in session_key if i.isdigit()]
             key_string = ''
             for digit in key_digits:
                 key_string = key_string + str(digit)
             self.session_key = int(key_string)
-            self.session_key_phrase = str(session_key)
+            self.session_key_phrase = str(key_string)
             phrase = 'session key set to ' + self.session_key_phrase
             self.speak(phrase)
             return True
@@ -130,7 +130,7 @@ class Daphne(FallbackSkill):
             return False
 
     def validate_key(self, utterance):
-        key_digits = [int(i) for i in utterance.split() if i.isdigit()]
+        key_digits = [int(i) for i in utterance if i.isdigit()]
         if len(key_digits) != 4:
             return False
         else:

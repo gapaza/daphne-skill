@@ -12,6 +12,7 @@ class Daphne(FallbackSkill):
 
         # Connection Variables
         self.ws_url = 'wss://dev.selva-research.com/api/mycroft'
+        # self.ws_url = 'ws://localhost:8000/api/mycroft'
         self.ws_thread = None
         self.connection = None
         self.connection_queue = Queue()
@@ -33,8 +34,8 @@ class Daphne(FallbackSkill):
     def on_error(self, ws, error):
         print(error)
 
-    def on_close(self, ws):
-        print('connection closed')
+    def on_close(self, ws, close_status_code, close_msg):
+        print(close_status_code, close_msg)
 
     def on_open(self, ws):
         def run(*args):
@@ -75,7 +76,7 @@ class Daphne(FallbackSkill):
             self.connection = websocket.WebSocketApp(self.ws_url,
                                                      on_message=lambda ws, message: self.on_message(ws, message),
                                                      on_error=lambda ws, error: self.on_error(ws, error),
-                                                     on_close=lambda ws: self.on_close(ws),
+                                                     on_close=lambda ws, status, msg: self.on_close(ws, status, msg),
                                                      header={'mycroft-session': str(self.session_key)})
             self.connection.on_open = lambda ws: self.on_open(ws)
             self.ws_thread = Thread(target=self.open_connection, args=(self.connection_queue, self.connection))
@@ -107,6 +108,9 @@ class Daphne(FallbackSkill):
             self.ws_thread = None
             if terminate_phrase is not None:
                 self.speak(str(phrase))
+
+    def get_session_key_strong(self):
+        return 0
 
     def get_session_key(self):
         session_key = self.get_response("PleaseReadYourFourDigitKey",
